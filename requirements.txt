@@ -1,2 +1,2 @@
-telethon>=1.36,<2
+telethon>=1.38.1,<2
 python-dotenv>=1.0,<2

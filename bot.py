@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import logging
 import os
 import sys
@@ -8,6 +9,8 @@ from dotenv import load_dotenv
 from telethon import TelegramClient, events
 from telethon.errors import ChatWriteForbiddenError, FloodWaitError, ReactionInvalidError
 from telethon.sessions import StringSession
+from telethon.tl.functions.messages import SendReactionRequest
+from telethon.tl.types import ReactionEmoji
 
 load_dotenv()
 
@@ -75,17 +78,42 @@ def build_client() -> TelegramClient:
 client = build_client()
 
 
+def build_reaction_request(peer, msg_id: int) -> SendReactionRequest:
+    emoji = ReactionEmoji(emoticon=REACTION)
+    params = inspect.signature(SendReactionRequest.__init__).parameters
+    kwargs = {"peer": peer, "msg_id": msg_id}
+
+    reaction_param = params.get("reaction")
+    if reaction_param is not None:
+        annotation = str(reaction_param.annotation)
+        if "List" in annotation or "Sequence" in annotation or "list[" in annotation:
+            kwargs["reaction"] = [emoji]
+        else:
+            kwargs["reaction"] = emoji
+
+    if "add_to_recent" in params:
+        kwargs["add_to_recent"] = True
+
+    return SendReactionRequest(**kwargs)
+
+
+async def send_reaction(message) -> None:
+    await client(build_reaction_request(message.peer_id, message.id))
+
+
 async def add_like(message) -> None:
     await asyncio.sleep(DELAY_SECONDS)
     try:
-        await message.react(REACTION)
+        await send_reaction(message)
     except FloodWaitError as error:
         logger.warning("FloodWait: жду %s сек.", error.seconds)
         await asyncio.sleep(error.seconds + 1)
-        await message.react(REACTION)
+        await send_reaction(message)
 
 
 async def like_if_needed(message, *, reason: str) -> None:
+    if getattr(message, "action", None):
+        return
     if message.out and not LIKE_OWN_MESSAGES:
         return
 
