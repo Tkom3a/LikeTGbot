@@ -1,0 +1,13 @@
+services:
+  likebot:
+    build: .
+    container_name: likebot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      SESSION_DIR: /data
+    volumes:
+      - ./data:/data
+    stdin_open: true
+    tty: true

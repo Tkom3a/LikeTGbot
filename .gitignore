@@ -1,0 +1,27 @@
+# Secrets and local config
+.env
+.env.local
+.env.*.local
+
+# Telegram session (полный доступ к аккаунту)
+data/
+*.session
+*.session-journal
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+
+# Tools and OS
+.idea/
+.vscode/
+*.log
+.DS_Store
+Thumbs.db
