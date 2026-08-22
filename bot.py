@@ -12,7 +12,7 @@ from telethon.sessions import StringSession
 from telethon.tl.functions.messages import SendReactionRequest
 from telethon.tl.types import ReactionEmoji
 
-BOT_VERSION = "2026-08-22-stock-like"
+BOT_VERSION = "2026-08-22-control-bot"
 # Стоковый лайк Telegram — ❤ (U+2764). Слово heart и ♥ из интернета сюда нормализуются.
 STOCK_LIKE = "❤"
 REACTION_ALIASES = {
@@ -95,18 +95,44 @@ if REACTION != STOCK_LIKE and any(char in HEART_CHARS for char in REACTION):
     REACTION = STOCK_LIKE
 SESSION_NAME = os.getenv("SESSION_NAME", "likebot").strip() or "likebot"
 SESSION_DIR = Path(os.getenv("SESSION_DIR", "/data"))
+SESSION_DIR.mkdir(parents=True, exist_ok=True)
 SESSION_STRING = os.getenv("TELEGRAM_SESSION_STRING", "").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 LIKE_OWN_MESSAGES = env_bool("LIKE_OWN_MESSAGES", False)
 LIST_CHATS = env_bool("LIST_CHATS", False)
 BACKFILL_LIMIT = int(os.getenv("BACKFILL_LIMIT", "0"))
 DELAY_SECONDS = float(os.getenv("DELAY_SECONDS", "0.4"))
+STATE_FILE = SESSION_DIR / "likes_enabled"
+
+
+class LikeState:
+    def __init__(self) -> None:
+        self.enabled = self._load()
+
+    def _load(self) -> bool:
+        if not STATE_FILE.exists():
+            return True
+        return STATE_FILE.read_text(encoding="utf-8").strip().lower() in {"1", "true", "on", "yes"}
+
+    def set(self, enabled: bool) -> None:
+        self.enabled = enabled
+        STATE_FILE.write_text("true" if enabled else "false", encoding="utf-8")
+
+    def toggle(self) -> bool:
+        self.set(not self.enabled)
+        return self.enabled
+
+    def status_text(self) -> str:
+        return "включены ❤" if self.enabled else "выключены"
+
+
+like_state = LikeState()
 
 
 def build_client() -> TelegramClient:
     if SESSION_STRING:
         return TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
-    SESSION_DIR.mkdir(parents=True, exist_ok=True)
     session_path = SESSION_DIR / SESSION_NAME
     return TelegramClient(str(session_path), API_ID, API_HASH)
 
@@ -148,6 +174,8 @@ async def add_like(message) -> None:
 
 
 async def like_if_needed(message, *, reason: str) -> None:
+    if not like_state.enabled:
+        return
     if getattr(message, "action", None):
         return
     if message.out and not LIKE_OWN_MESSAGES:
@@ -193,6 +221,48 @@ async def backfill(entities) -> None:
         logger.info("Backfill завершён: chat=%s messages=%s", getattr(entity, "id", entity), count)
 
 
+def likes_status_message() -> str:
+    return f"Лайки сейчас {like_state.status_text()}.\nНажмите /like ещё раз, чтобы переключить."
+
+
+async def start_control_bot(owner_id: int):
+    if not BOT_TOKEN:
+        logger.warning("BOT_TOKEN не задан. Создайте бота в @BotFather и добавьте токен в .env")
+        return None
+
+    bot = TelegramClient(str(SESSION_DIR / "control_bot"), API_ID, API_HASH)
+    await bot.start(bot_token=BOT_TOKEN)
+    me_bot = await bot.get_me()
+    logger.info("Контрольный бот запущен: @%s", me_bot.username)
+
+    @bot.on(events.NewMessage(incoming=True, pattern=r"^/start(?:@\w+)?\s*$"))
+    async def on_start(event: events.NewMessage.Event) -> None:
+        if not event.is_private:
+            return
+        if event.sender_id != owner_id:
+            await event.reply("Нет доступа.")
+            return
+        await event.reply(likes_status_message())
+
+    @bot.on(events.NewMessage(incoming=True, pattern=r"^/like(?:@\w+)?\s*$"))
+    async def on_like(event: events.NewMessage.Event) -> None:
+        if not event.is_private:
+            return
+        if event.sender_id != owner_id:
+            await event.reply("Нет доступа.")
+            return
+
+        enabled = like_state.toggle()
+        if enabled:
+            await event.reply("Лайки включены ❤")
+            logger.info("Лайки включены командой /like")
+        else:
+            await event.reply("Лайки выключены")
+            logger.info("Лайки выключены командой /like")
+
+    return bot
+
+
 async def resolve_chats() -> list:
     entities = []
     for chat in CHAT_IDS:
@@ -223,12 +293,18 @@ async def main() -> None:
         sys.exit(1)
 
     entities = await resolve_chats()
-    logger.info("Реакция: %s | свои сообщения: %s", reaction_debug(REACTION), LIKE_OWN_MESSAGES)
+    logger.info(
+        "Реакция: %s | свои сообщения: %s | лайки: %s",
+        reaction_debug(REACTION),
+        LIKE_OWN_MESSAGES,
+        like_state.status_text(),
+    )
 
     @client.on(events.NewMessage(chats=entities))
     async def on_new_message(event: events.NewMessage.Event) -> None:
         await like_if_needed(event.message, reason="new")
 
+    await start_control_bot(me.id)
     await backfill(entities)
     logger.info("Бот слушает новые сообщения")
     await client.run_until_disconnected()
