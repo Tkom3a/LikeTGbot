@@ -7,10 +7,44 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from telethon import TelegramClient, events
-from telethon.errors import ChatWriteForbiddenError, FloodWaitError, ReactionInvalidError
+from telethon.errors import ChatWriteForbiddenError, FloodWaitError, ReactionInvalidError, RPCError
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import SendReactionRequest
 from telethon.tl.types import ReactionEmoji
+
+BOT_VERSION = "2026-08-22-stock-like"
+# Стоковый лайк Telegram — ❤ (U+2764). Слово heart и ♥ из интернета сюда нормализуются.
+STOCK_LIKE = "❤"
+REACTION_ALIASES = {
+    "heart": STOCK_LIKE,
+    "love": STOCK_LIKE,
+    "like": STOCK_LIKE,
+    "лайк": STOCK_LIKE,
+    "сердечко": STOCK_LIKE,
+    "сердце": STOCK_LIKE,
+    "stock": STOCK_LIKE,
+}
+HEART_CHARS = set("❤♥♡❣💕💖💗💘💝💞💟💔🧡💛💚💙💜🖤🤍🤎😍🥰")
+
+
+def normalize_reaction(raw: str) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return STOCK_LIKE
+
+    alias = REACTION_ALIASES.get(value.lower())
+    if alias:
+        return alias
+
+    cleaned = value.replace("\ufe0f", "").replace("\ufe0e", "").strip()
+    if cleaned in HEART_CHARS or any(char in HEART_CHARS for char in cleaned):
+        return STOCK_LIKE
+    return cleaned or STOCK_LIKE
+
+
+def reaction_debug(value: str) -> str:
+    codes = " ".join(f"U+{ord(char):04X}" for char in value)
+    return f"{value} [{codes}]"
 
 load_dotenv()
 
@@ -56,7 +90,9 @@ def require_env(name: str) -> str:
 API_ID = int(require_env("TELEGRAM_API_ID"))
 API_HASH = require_env("TELEGRAM_API_HASH")
 CHAT_IDS = parse_chat_ids(os.getenv("CHAT_IDS", ""))
-REACTION = os.getenv("REACTION", "👍").strip() or "👍"
+REACTION = normalize_reaction(os.getenv("REACTION", "heart"))
+if REACTION != STOCK_LIKE and any(char in HEART_CHARS for char in REACTION):
+    REACTION = STOCK_LIKE
 SESSION_NAME = os.getenv("SESSION_NAME", "likebot").strip() or "likebot"
 SESSION_DIR = Path(os.getenv("SESSION_DIR", "/data"))
 SESSION_STRING = os.getenv("TELEGRAM_SESSION_STRING", "").strip()
@@ -122,9 +158,17 @@ async def like_if_needed(message, *, reason: str) -> None:
         chat = message.chat_id
         logger.info("Лайк поставлен (%s) message=%s chat=%s", reason, message.id, chat)
     except ReactionInvalidError:
-        logger.error("Реакция %s недоступна в этом чате", REACTION)
+        logger.error("Реакция %s недоступна в этом чате", reaction_debug(REACTION))
     except ChatWriteForbiddenError:
         logger.warning("Нет права ставить реакции в чате %s", message.chat_id)
+    except RPCError as error:
+        logger.error(
+            "Telegram отклонил лайк message=%s chat=%s reaction=%s: %s",
+            message.id,
+            getattr(message, "chat_id", None),
+            reaction_debug(REACTION),
+            error,
+        )
     except Exception:
         logger.exception("Не удалось лайкнуть message=%s chat=%s", message.id, message.chat_id)
 
@@ -167,6 +211,7 @@ async def resolve_chats() -> list:
 async def main() -> None:
     await client.start()
     me = await client.get_me()
+    logger.info("LikeBot %s", BOT_VERSION)
     logger.info("Вход выполнен: %s (id=%s)", me.username or me.first_name, me.id)
 
     if LIST_CHATS:
@@ -178,7 +223,7 @@ async def main() -> None:
         sys.exit(1)
 
     entities = await resolve_chats()
-    logger.info("Реакция: %s | свои сообщения: %s", REACTION, LIKE_OWN_MESSAGES)
+    logger.info("Реакция: %s | свои сообщения: %s", reaction_debug(REACTION), LIKE_OWN_MESSAGES)
 
     @client.on(events.NewMessage(chats=entities))
     async def on_new_message(event: events.NewMessage.Event) -> None:

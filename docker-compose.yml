@@ -9,5 +9,6 @@ services:
       SESSION_DIR: /data
     volumes:
       - ./data:/data
+      - ./bot.py:/app/bot.py:ro
     stdin_open: true
     tty: true

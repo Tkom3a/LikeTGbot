@@ -25,7 +25,7 @@ cp .env.example .env
 TELEGRAM_API_ID=12345678
 TELEGRAM_API_HASH=your_api_hash
 CHAT_IDS=-1001234567890,-1009876543210
-REACTION=👍
+REACTION=heart
 ```
 
 3. Первый запуск должен быть интерактивным: Telegram пришлёт код подтверждения.
@@ -53,6 +53,29 @@ docker compose logs -f likebot
 ```bash
 docker compose down
 ```
+
+## Логи
+
+Смотреть логи в реальном времени:
+
+```bash
+docker compose logs -f likebot
+```
+
+Последние 100 строк:
+
+```bash
+docker compose logs --tail 100 likebot
+```
+
+Если контейнер назван иначе:
+
+```bash
+docker ps
+docker logs -f likebot
+```
+
+При старте в логе должна быть строка `Реакция: ❤ [U+2764]`. Если Telegram отклоняет эмодзи, будет `Telegram отклонил лайк` или `Реакция ... недоступна`.
 
 ## Как узнать id чата
 
@@ -90,7 +113,7 @@ docker compose run --rm likebot
 | `TELEGRAM_API_ID` | да | Числовой api_id с my.telegram.org |
 | `TELEGRAM_API_HASH` | да | api_hash с my.telegram.org |
 | `CHAT_IDS` | да | Чаты через запятую: `-100...` или `@username` |
-| `REACTION` | нет | Эмодзи реакции. По умолчанию `👍` |
+| `REACTION` | нет | Реакция. Для сердечка пишите `heart`. Можно `❤`, `👍` или `like` |
 | `LIKE_OWN_MESSAGES` | нет | `true`, если нужно лайкать и свои сообщения |
 | `DELAY_SECONDS` | нет | Пауза перед реакцией. По умолчанию `0.4` |
 | `BACKFILL_LIMIT` | нет | Сколько последних сообщений лайкнуть при старте. `0` — только новые |
@@ -140,3 +163,5 @@ SESSION_DIR=./data
 ## Как это работает
 
 Бот авторизуется вашим аккаунтом, подписывается на новые сообщения в чатах из `CHAT_IDS` и ставит выбранную реакцию. Свои сообщения по умолчанию пропускаются. Если задать `BACKFILL_LIMIT`, при старте он также пройдётся по последним сообщениям в каждом чате.
+
+Telegram принимает сердечко именно как `❤` (`U+2764`). Вариант `❤️` часто даёт ошибку. Поэтому в `.env` надёжнее писать `REACTION=heart`.
